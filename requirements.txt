@@ -1,0 +1,12 @@
+# Bot de Telegram
+python-telegram-bot>=21.0
+
+# Google Sheets (cuenta de servicio)
+gspread>=6.0
+google-auth>=2.0
+
+# Lectura de .env
+python-dotenv>=1.0
+
+# Proveedores de IA (se usa el que indique AI_PROVIDER)
+google-genai>=1.0
