@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "if [ \"$(git rev-parse --abbrev-ref HEAD)\" = main ]; then git push origin main; else echo 'Push omitido: la rama no es main'; fi",
+            "statusMessage": "Subiendo cambios a origin main"
+          }
+        ]
+      }
+    ]
+  }
+}
