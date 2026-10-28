@@ -1,10 +1,13 @@
+import asyncio
 import datetime
 import unittest
+from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Chat, Message, MessageEntity, Update, User
 from telegram.ext import CommandHandler
 
-from finance_bot.bot import build_application, owner_filter
+from finance_bot.bot import build_application, owner_filter, prueba
+from finance_bot.sheets import TEST_DESCRIPTION, append_row, build_test_row
 from finance_bot.config import Settings
 
 OWNER_ID = 111
@@ -44,8 +47,8 @@ class OwnerFilterTest(unittest.TestCase):
 
 class HandlerRoutingTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.application = build_application(make_settings())
-        self.start, self.echo = self.application.handlers[0]
+        self.application = build_application(make_settings(), worksheet=None)
+        self.start, self.prueba_handler, self.echo = self.application.handlers[0]
 
     def test_start_command_is_registered_and_not_echoed(self) -> None:
         # CommandHandler.check_update necesita un bot inicializado (red), así que se revisa la configuración.
@@ -53,10 +56,58 @@ class HandlerRoutingTest(unittest.TestCase):
         self.assertEqual(self.start.commands, frozenset({"start"}))
         self.assertFalse(self.echo.check_update(make_update(OWNER_ID, "/start")))
 
+    def test_prueba_command_is_registered(self) -> None:
+        self.assertIsInstance(self.prueba_handler, CommandHandler)
+        self.assertEqual(self.prueba_handler.commands, frozenset({"prueba"}))
+
     def test_plain_text_goes_to_echo_handler(self) -> None:
         update = make_update(OWNER_ID, "Gasté $19.000")
         self.assertFalse(self.start.check_update(update))
         self.assertTrue(self.echo.check_update(update))
+
+
+class SheetsWriteTest(unittest.TestCase):
+    def test_test_row_has_all_columns_in_order(self) -> None:
+        row = build_test_row("America/Bogota")
+        self.assertEqual(len(row), 5)
+        self.assertEqual(row[0], TEST_DESCRIPTION)
+        self.assertRegex(row[1], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertEqual(row[3], 0)
+
+    def test_append_row_uses_user_entered_option(self) -> None:
+        worksheet = MagicMock()
+        append_row(worksheet, ["x", "2026-10-27", "y", 5, "z"])
+        worksheet.append_row.assert_called_once_with(
+            ["x", "2026-10-27", "y", 5, "z"], value_input_option="USER_ENTERED"
+        )
+
+
+class PruebaCommandTest(unittest.TestCase):
+    def make_context(self, worksheet) -> MagicMock:
+        context = MagicMock()
+        context.bot_data = {"worksheet": worksheet, "timezone": "America/Bogota"}
+        return context
+
+    def make_update(self) -> MagicMock:
+        update = MagicMock()
+        update.message.reply_text = AsyncMock()
+        return update
+
+    def test_confirms_only_after_sheets_succeeds(self) -> None:
+        worksheet = MagicMock()
+        update = self.make_update()
+        asyncio.run(prueba(update, self.make_context(worksheet)))
+        worksheet.append_row.assert_called_once()
+        update.message.reply_text.assert_awaited_once_with("Fila de prueba guardada en Transacciones.")
+
+    def test_does_not_confirm_when_sheets_fails(self) -> None:
+        worksheet = MagicMock()
+        worksheet.append_row.side_effect = RuntimeError("sin permisos")
+        update = self.make_update()
+        asyncio.run(prueba(update, self.make_context(worksheet)))
+        reply = update.message.reply_text.await_args.args[0]
+        self.assertIn("No pude guardar", reply)
+        self.assertNotIn("guardada", reply)
 
 
 if __name__ == "__main__":
