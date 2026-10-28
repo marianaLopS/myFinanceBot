@@ -1,26 +1,29 @@
 import asyncio
 import datetime
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from telegram import Chat, Message, MessageEntity, Update, User
 from telegram.ext import CommandHandler
 
-from finance_bot.bot import build_application, owner_filter, prueba
+from finance_bot.bot import SAVE_ERROR, build_application, handle_message, owner_filter, prueba
+from finance_bot.catalog import Catalog
 from finance_bot.config import Settings
 from finance_bot.sheets import TEST_DESCRIPTION, append_row, build_test_row
+from finance_bot.state import BotState
 
 OWNER_ID = 111
 OTHER_ID = 222
+CATALOG = Catalog(categories=("Comer afuera", "Transporte"), accounts=("Bancolombia", "Efectivo"))
 
 
-def make_update(user_id: int, text: str) -> Update:
+def make_update(user_id: int, text: str, update_id: int = 1) -> Update:
     user = User(id=user_id, first_name="Test", is_bot=False)
     chat = Chat(id=user_id, type=Chat.PRIVATE)
     # Telegram marca los comandos con una entidad bot_command al inicio del texto.
     entities = [MessageEntity(type=MessageEntity.BOT_COMMAND, offset=0, length=len(text))] if text.startswith("/") else None
     message = Message(message_id=1, date=datetime.datetime.now(), chat=chat, from_user=user, text=text, entities=entities)
-    return Update(update_id=1, message=message)
+    return Update(update_id=update_id, message=message)
 
 
 def make_settings() -> Settings:
@@ -32,6 +35,7 @@ def make_settings() -> Settings:
         ai_provider="gemini",
         gemini_api_key="key",
         gemini_model="gemini-test",
+        database_path=":memory:",
         timezone="America/Bogota",
     )
 
@@ -112,6 +116,87 @@ class PruebaCommandTest(unittest.TestCase):
         reply = update.message.reply_text.await_args.args[0]
         self.assertIn("No pude guardar", reply)
         self.assertNotIn("guardada", reply)
+
+
+class FakeProvider:
+    def __init__(self, response: str) -> None:
+        self.response = response
+
+    def complete(self, prompt: str) -> str:
+        return self.response
+
+
+class MessageFlowTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.worksheet = MagicMock()
+        self.spreadsheet = MagicMock()
+        self.spreadsheet.worksheet.return_value = self.worksheet
+        self.state = BotState(":memory:")
+        self.provider = FakeProvider(
+            '{"tipo": "gasto", "descripcion": "agua cristal", "monto": 1500, '
+            '"categoria": "Transporte", "cuenta": null, "fecha": "2026-10-22"}'
+        )
+        self.context = MagicMock()
+        self.context.bot_data = {
+            "spreadsheet": self.spreadsheet,
+            "provider": self.provider,
+            "state": self.state,
+            "timezone": "America/Bogota",
+        }
+        self.patcher = patch("finance_bot.bot.read_catalog", return_value=CATALOG)
+        self.patcher.start()
+
+    def tearDown(self) -> None:
+        self.patcher.stop()
+
+    def send(self, text: str, update_id: int) -> str:
+        update = make_update(OWNER_ID, text, update_id)
+        with patch.object(Message, "reply_text", new_callable=AsyncMock) as reply_text:
+            asyncio.run(handle_message(update, self.context))
+        # Un update ya procesado no recibe respuesta.
+        return reply_text.await_args.args[0] if reply_text.await_args else None
+
+    def test_missing_account_asks_then_saves_signed_row(self) -> None:
+        question = self.send("-1.500 de agua cristal el 22 de octubre", update_id=10)
+        self.assertIn("¿Con qué cuenta lo pagaste?", question)
+        self.worksheet.append_row.assert_not_called()
+
+        confirmation = self.send("efectivo", update_id=11)
+        self.assertIn("Guardado", confirmation)
+        row = self.worksheet.append_row.call_args.args[0]
+        self.assertEqual(row, ["agua cristal", "2026-10-22", "Transporte", -1500.0, "Efectivo"])
+        self.assertIsNone(self.state.get_draft(OWNER_ID))
+
+    def test_duplicate_update_is_not_written_twice(self) -> None:
+        self.provider.response = (
+            '{"tipo": "gasto", "monto": 5000, "categoria": "Transporte", "cuenta": "Efectivo", "fecha": "2026-10-27"}'
+        )
+        self.send("bus", update_id=20)
+        self.send("bus", update_id=20)
+        self.assertEqual(self.worksheet.append_row.call_count, 1)
+
+    def test_sheets_failure_confirms_nothing_and_can_be_retried(self) -> None:
+        self.provider.response = (
+            '{"tipo": "gasto", "monto": 5000, "categoria": "Transporte", "cuenta": "Efectivo", "fecha": "2026-10-27"}'
+        )
+        self.worksheet.append_row.side_effect = RuntimeError("cuota")
+        self.assertEqual(self.send("bus", update_id=30), SAVE_ERROR)
+        self.assertFalse(self.state.is_processed(30))
+
+        self.worksheet.append_row.side_effect = None
+        self.assertIn("Guardado", self.send("bus", update_id=31))
+
+    def test_unknown_option_is_asked_again(self) -> None:
+        self.send("-1.500 de agua cristal", update_id=40)
+        reply = self.send("Daviplata", update_id=41)
+        self.assertIn("No reconozco 'Daviplata'", reply)
+        self.worksheet.append_row.assert_not_called()
+
+    def test_cancel_discards_pending_question(self) -> None:
+        self.send("-1.500 de agua cristal", update_id=50)
+        self.assertEqual(self.send("cancelar", update_id=51), "Cancelado. No se guardó nada.")
+        self.assertIsNone(self.state.get_draft(OWNER_ID))
+        self.worksheet.append_row.assert_not_called()
 
 
 if __name__ == "__main__":

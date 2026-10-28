@@ -22,6 +22,7 @@ class Settings:
     ai_provider: str
     gemini_api_key: str
     gemini_model: str
+    database_path: str
     timezone: str
 
 
@@ -44,5 +45,6 @@ def load_settings(env_file: str = ".env") -> Settings:
         ai_provider=os.getenv("AI_PROVIDER", "gemini"),
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
+        database_path=os.getenv("DATABASE_PATH", "data/finance_bot.db"),
         timezone=os.getenv("TIMEZONE", "America/Bogota"),
     )
