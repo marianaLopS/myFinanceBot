@@ -20,13 +20,19 @@ class Settings:
     google_credentials_file: str
     google_sheet_id: str
     ai_provider: str
+    gemini_api_key: str
+    gemini_model: str
     timezone: str
 
 
 def load_settings(env_file: str = ".env") -> Settings:
     load_dotenv(env_file)
 
-    missing = [name for name in REQUIRED_VARS if not os.getenv(name)]
+    required = list(REQUIRED_VARS)
+    if os.getenv("AI_PROVIDER", "gemini") == "gemini":
+        required.append("GEMINI_API_KEY")
+
+    missing = [name for name in required if not os.getenv(name)]
     if missing:
         raise ValueError(f"Faltan variables en .env: {', '.join(missing)}")
 
@@ -36,5 +42,7 @@ def load_settings(env_file: str = ".env") -> Settings:
         google_credentials_file=os.environ["GOOGLE_CREDENTIALS_FILE"],
         google_sheet_id=os.environ["GOOGLE_SHEET_ID"],
         ai_provider=os.getenv("AI_PROVIDER", "gemini"),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
         timezone=os.getenv("TIMEZONE", "America/Bogota"),
     )

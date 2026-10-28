@@ -7,8 +7,8 @@ from telegram import Chat, Message, MessageEntity, Update, User
 from telegram.ext import CommandHandler
 
 from finance_bot.bot import build_application, owner_filter, prueba
-from finance_bot.sheets import TEST_DESCRIPTION, append_row, build_test_row
 from finance_bot.config import Settings
+from finance_bot.sheets import TEST_DESCRIPTION, append_row, build_test_row
 
 OWNER_ID = 111
 OTHER_ID = 222
@@ -30,6 +30,8 @@ def make_settings() -> Settings:
         google_credentials_file="credentials.json",
         google_sheet_id="sheet",
         ai_provider="gemini",
+        gemini_api_key="key",
+        gemini_model="gemini-test",
         timezone="America/Bogota",
     )
 
@@ -47,23 +49,23 @@ class OwnerFilterTest(unittest.TestCase):
 
 class HandlerRoutingTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.application = build_application(make_settings(), worksheet=None)
-        self.start, self.prueba_handler, self.echo = self.application.handlers[0]
+        self.application = build_application(make_settings(), spreadsheet=None, provider=None)
+        self.start, self.prueba_handler, self.text_handler = self.application.handlers[0]
 
-    def test_start_command_is_registered_and_not_echoed(self) -> None:
+    def test_start_command_is_registered_and_not_interpreted(self) -> None:
         # CommandHandler.check_update necesita un bot inicializado (red), así que se revisa la configuración.
         self.assertIsInstance(self.start, CommandHandler)
         self.assertEqual(self.start.commands, frozenset({"start"}))
-        self.assertFalse(self.echo.check_update(make_update(OWNER_ID, "/start")))
+        self.assertFalse(self.text_handler.check_update(make_update(OWNER_ID, "/start")))
 
     def test_prueba_command_is_registered(self) -> None:
         self.assertIsInstance(self.prueba_handler, CommandHandler)
         self.assertEqual(self.prueba_handler.commands, frozenset({"prueba"}))
 
-    def test_plain_text_goes_to_echo_handler(self) -> None:
+    def test_plain_text_goes_to_interpreter(self) -> None:
         update = make_update(OWNER_ID, "Gasté $19.000")
         self.assertFalse(self.start.check_update(update))
-        self.assertTrue(self.echo.check_update(update))
+        self.assertTrue(self.text_handler.check_update(update))
 
 
 class SheetsWriteTest(unittest.TestCase):
@@ -84,8 +86,10 @@ class SheetsWriteTest(unittest.TestCase):
 
 class PruebaCommandTest(unittest.TestCase):
     def make_context(self, worksheet) -> MagicMock:
+        spreadsheet = MagicMock()
+        spreadsheet.worksheet.return_value = worksheet
         context = MagicMock()
-        context.bot_data = {"worksheet": worksheet, "timezone": "America/Bogota"}
+        context.bot_data = {"spreadsheet": spreadsheet, "timezone": "America/Bogota"}
         return context
 
     def make_update(self) -> MagicMock:

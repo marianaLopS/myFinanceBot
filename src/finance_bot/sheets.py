@@ -10,10 +10,10 @@ TRANSACTIONS_TAB = "Transacciones"
 TEST_DESCRIPTION = "Prueba de conexión"
 
 
-def open_transactions(credentials_file: str, sheet_id: str) -> gspread.Worksheet:
+def open_spreadsheet(credentials_file: str, sheet_id: str) -> gspread.Spreadsheet:
     # Requiere que la hoja esté compartida con el correo de la cuenta de servicio (Editor).
     client = gspread.service_account(filename=credentials_file)
-    return client.open_by_key(sheet_id).worksheet(TRANSACTIONS_TAB)
+    return client.open_by_key(sheet_id)
 
 
 def build_test_row(timezone: str) -> list[str | int]:
